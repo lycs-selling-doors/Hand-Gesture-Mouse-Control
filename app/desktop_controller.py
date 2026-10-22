@@ -13,7 +13,7 @@ import numpy as np
 
 from .control_config import ConfigStore, GESTURES, POSTURES, PROFILES, validate_config
 from .download_model import download_model
-from .gesture_logic import (GestureGate, MovementGate, PointerMapper, SensitivityTuner,
+from .gesture_logic import (GestureGate, MovementGate, MovementTransitionGuard, PointerMapper, SensitivityTuner,
                             is_move_gesture, pose_features, recognize)
 from .hand_tracking import HandTracker, draw_landmarks
 from .model import DEFAULT_MODEL_PATH
@@ -271,6 +271,7 @@ class DesktopController:
         cap = None
         gate, mapper, tuner = GestureGate(), PointerMapper(), SensitivityTuner()
         movement = MovementGate()
+        transition = MovementTransitionGuard()
         last_tuning, previous_revision = "", -1
         frame_time = time.monotonic()
         preview_time = 0
@@ -298,6 +299,7 @@ class DesktopController:
                             gate.reset()
                             mapper.reset()
                             movement.reset()
+                            transition.reset()
                             tuner.anchor = None
                             previous_revision = self._revision
                         if self._arm_at:
@@ -308,6 +310,7 @@ class DesktopController:
                                 gate.reset()
                                 gate.latched = True  # Require a release after enabling control.
                                 movement.reset()
+                                transition.reset()
                         if platform.system() == "Windows" and ctypes.windll.user32.GetAsyncKeyState(0x77) & 0x8000:
                             self._disarm()
                         armed = self._state["armed"] and not self._gui_focused
@@ -345,7 +348,11 @@ class DesktopController:
                             # Movement wins over any overlapping custom pose binding.
                             action = ("none" if mouse_mode and movement_pose else
                                       config["bindings"][config["mode"]].get(gesture, "none"))
-                            event = gate.update(gesture if action != "none" else None, now, config["hold_ms"] / 1000)
+                            if mouse_mode and not transition.allow_action(movement_pose, now):
+                                gate.reset()
+                                event = None
+                            else:
+                                event = gate.update(gesture if action != "none" else None, now, config["hold_ms"] / 1000)
                             may_move = movement.update(mouse_mode and movement_pose, now)
                             if not may_move:
                                 mapper.reset()
@@ -365,6 +372,7 @@ class DesktopController:
                             gate.reset()
                             mapper.reset()
                             movement.reset()
+                            transition.reset()
                     else:
                         gate.update(None, now)
                         mapper.reset()

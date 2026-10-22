@@ -11,7 +11,7 @@ import numpy as np
 
 from app.control_config import ConfigStore, default_config, validate_action, validate_config
 from app.desktop_controller import DesktopController, cuda_capability, dispatch
-from app.gesture_logic import (GestureGate, MovementGate, PointerMapper, SensitivityTuner,
+from app.gesture_logic import (GestureGate, MovementGate, MovementTransitionGuard, PointerMapper, SensitivityTuner,
                                is_move_gesture, pose_features, recognize)
 
 
@@ -22,6 +22,21 @@ def hand():
               16: (.6, .22), 17: (.7, .72), 18: (.7, .52), 20: (.7, .32)}
     for index, (x, y) in coords.items():
         points[index] = SimpleNamespace(x=x, y=y, z=0.)
+    return points
+
+
+def two_finger_pose(kind):
+    points = hand()
+    for i, x in ((16, .6), (20, .62)):
+        points[i] = SimpleNamespace(x=x, y=.8, z=0.)
+    layouts = {
+        "parallel": {6: (.43, .45), 8: (.45, .2), 10: (.49, .4), 12: (.47, .2)},
+        "victory": {6: (.34, .45), 8: (.27, .2), 10: (.58, .4), 12: (.67, .2)},
+        "gray": {6: (.39, .45), 8: (.38, .2), 10: (.51, .4), 12: (.52, .2)},
+        "bent_contact": {8: (.49, .48), 12: (.51, .48)},
+    }
+    for i, (x, y) in layouts[kind].items():
+        points[i] = SimpleNamespace(x=x, y=y, z=0.)
     return points
 
 
@@ -87,6 +102,44 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class GestureTests(unittest.TestCase):
+    def test_parallel_victory_and_bent_contact_are_mutually_exclusive(self):
+        for kind, expected in (("parallel", "index_middle"), ("victory", "victory"),
+                               ("gray", None), ("bent_contact", None)):
+            with self.subTest(kind=kind):
+                points = two_finger_pose(kind)
+                self.assertEqual(recognize(points, 1, .32)[0], expected)
+                self.assertEqual(is_move_gesture(points), expected == "index_middle")
+
+    def test_adjusting_thumb_pinch_threshold_does_not_change_two_finger_partition(self):
+        for threshold in (.15, .32, .65):
+            self.assertTrue(is_move_gesture(two_finger_pose("parallel"), 1, threshold))
+            self.assertFalse(is_move_gesture(two_finger_pose("victory"), 1, threshold))
+            self.assertIsNone(recognize(two_finger_pose("gray"), 1, threshold)[0])
+
+    def test_thumb_touching_both_extended_tips_is_ambiguous_not_a_pinch(self):
+        points = two_finger_pose("parallel")
+        points[4] = SimpleNamespace(x=.46, y=.2, z=0.)
+        self.assertEqual(recognize(points, 1, .32), (None, False))
+        self.assertFalse(is_move_gesture(points))
+
+    def test_single_thumb_contact_remains_a_pinch_and_never_movement(self):
+        points = hand(); points[4] = deepcopy(points[8])
+        self.assertEqual(recognize(points, 1, .32), ("thumb_index", True))
+        self.assertFalse(is_move_gesture(points))
+
+    def test_move_to_action_transition_needs_a_settling_interval(self):
+        guard = MovementTransitionGuard()
+        self.assertTrue(guard.allow_action(False, 0))
+        self.assertFalse(guard.allow_action(True, 1))
+        self.assertFalse(guard.allow_action(False, 1.1))
+        self.assertTrue(guard.allow_action(False, 1.21))
+
+    def test_custom_template_cannot_override_ambiguous_or_reserved_two_finger_pose(self):
+        for kind, expected in (("gray", None), ("parallel", "index_middle"), ("victory", "victory")):
+            points = two_finger_pose(kind)
+            template = {"id": "pose_overlap", "features": pose_features(points)}
+            self.assertEqual(recognize(points, 1, .32, [template])[0], expected)
+
     def test_only_extended_together_fingers_enable_movement(self):
         landmarks = hand()
         self.assertFalse(is_move_gesture(landmarks))
@@ -296,6 +349,26 @@ class ControllerTests(unittest.TestCase):
         expected = PointerMapper().map(held[8].x, held[8].y,
                                       self.controller._config["postures"]["seated"], 1920, 1080)
         self.automation.moveTo.assert_called_once_with(*expected, _pause=False)
+        self.automation.click.assert_not_called()
+
+    def test_leaving_movement_does_not_click_on_a_short_transitional_fist(self):
+        held = two_finger_pose("parallel")
+        fist = hand()
+        for i in (8, 12, 16, 20):
+            fist[i] = SimpleNamespace(x=.5, y=.82, z=0.)
+        self.controller._config["hold_ms"] = 100
+        self.controller._config["bindings"]["mouse"]["fist"] = "click:left"
+        self.controller._state["armed"] = True; self.controller._gui_focused = False
+        frames = [held] * 3 + [fist] * 3 + [hand()]
+        frame = np.zeros((240, 320, 3), np.uint8)
+        clock = iter(i * .06 for i in range(100))
+        with patch("app.desktop_controller.HandTracker") as tracker, patch("app.desktop_controller.cv2.VideoCapture") as camera:
+            tracker.return_value.__enter__.return_value.process.side_effect = [SimpleNamespace(hand_landmarks=[p]) for p in frames]
+            camera.return_value.isOpened.return_value = True
+            camera.return_value.read.side_effect = [(True, frame)] * len(frames) + [(False, None)]
+            with patch("app.desktop_controller.time.monotonic", side_effect=lambda: next(clock)):
+                self.controller._run()
+        self.assertTrue(self.automation.moveTo.called)
         self.automation.click.assert_not_called()
 
     def test_shortcuts_release_modifiers_even_when_keydown_fails(self):

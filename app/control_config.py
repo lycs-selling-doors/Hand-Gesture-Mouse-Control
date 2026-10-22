@@ -11,8 +11,8 @@ SETTINGS_PATH = ROOT / "user-settings.json"
 GESTURES = {
     "thumb_index": "拇指 + 食指捏合", "thumb_middle": "拇指 + 中指捏合",
     "thumb_ring": "拇指 + 无名指捏合", "thumb_pinky": "拇指 + 小指捏合",
-    "index_middle": "食指 + 中指并拢", "open_palm": "张开手掌",
-    "fist": "握拳", "victory": "剪刀手",
+    "index_middle": "两指伸直并拢", "open_palm": "张开手掌",
+    "fist": "握拳", "victory": "剪刀手（明显 V 形）",
 }
 PROFILES = {"mouse": "鼠标模式", "ppt": "PPT 模式", "media": "媒体模式", "custom": "自定义模式"}
 POSTURES = {"seated": "坐姿", "standing": "站姿", "reclined": "倚靠", "custom": "自定义"}

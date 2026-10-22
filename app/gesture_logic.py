@@ -1,6 +1,8 @@
 """Pure geometry, posture mapping, gesture recognition and release-to-rearm logic."""
 
-from math import dist, sqrt
+from math import acos, cos, dist, radians, sqrt
+
+AMBIGUOUS = "__ambiguous__"
 
 
 def position(point, aspect=1):
@@ -14,15 +16,56 @@ def pose_features(landmarks, aspect=1):
     return [dist(points[a], points[b]) / scale for a, b in pairs]
 
 
-def is_move_gesture(landmarks, aspect=1, threshold=.32):
-    """Both fingers extended and together; pinches must never move the pointer."""
+def direction_cosine(a, b):
+    length = sqrt(sum(x * x for x in a) * sum(x * x for x in b))
+    if length < 1e-8:
+        return -1.0
+    return max(-1.0, min(1.0, sum(x * y for x, y in zip(a, b)) / length))
+
+
+def vector(start, end):
+    return tuple(b - a for a, b in zip(start, end))
+
+
+def builtin_gesture(landmarks, aspect, pinch_threshold):
+    """Exclusive built-in classification with an explicit neutral ambiguity band."""
     points = [position(point, aspect) for point in landmarks]
     scale = max(dist(points[5], points[17]), .02)
-    extended = all(dist(points[0], points[tip]) > dist(points[0], points[pip]) * 1.22
-                   for tip, pip in ((8, 6), (12, 10)))
-    separated_from_thumb = all(dist(points[4], points[tip]) / scale >= threshold
-                               for tip in (8, 12, 16, 20))
-    return extended and separated_from_thumb and dist(points[8], points[12]) / scale < threshold
+    extended, folded = [], []
+    for mcp, pip, tip in ((5, 6, 8), (9, 10, 12), (13, 14, 16), (17, 18, 20)):
+        straight = direction_cosine(vector(points[mcp], points[pip]), vector(points[pip], points[tip])) >= cos(radians(35))
+        radial = dist(points[0], points[tip]) / max(dist(points[0], points[pip]), .02)
+        extended.append(straight and radial > 1.22)
+        folded.append(radial < 1.05 and dist(points[0], points[tip]) <= dist(points[0], points[mcp]) * 1.3)
+
+    contacts = sorted((dist(points[4], points[tip]) / scale, name) for name, tip in
+                      (("thumb_index", 8), ("thumb_middle", 12), ("thumb_ring", 16), ("thumb_pinky", 20)))
+    if all(folded):
+        return "fist"
+    if contacts[0][0] < pinch_threshold:
+        # A thumb close to several fingertips is ambiguous, not a reliable pinch.
+        if contacts[1][0] - contacts[0][0] < .12:
+            return AMBIGUOUS
+        return contacts[0][1]
+
+    if extended[0] and extended[1]:
+        gap = dist(points[8], points[12]) / scale
+        angle = acos(direction_cosine(vector(points[5], points[8]), vector(points[9], points[12])))
+        # Movement thresholds are independent of the adjustable thumb-pinch threshold.
+        if gap <= .28 and angle <= radians(16):
+            return "index_middle"
+        if not extended[2] and not extended[3] and gap >= .65 and angle >= radians(22):
+            return "victory"
+        # Do not reinterpret intermediate two-finger poses as a fist or a pinch.
+        if not all(extended):
+            return AMBIGUOUS
+    if all(extended):
+        return "open_palm"
+    return None
+
+
+def is_move_gesture(landmarks, aspect=1, threshold=.32):
+    return builtin_gesture(landmarks, aspect, threshold) == "index_middle"
 
 
 class MovementGate:
@@ -43,14 +86,12 @@ class MovementGate:
 
 
 def recognize(landmarks, aspect, threshold, custom_gestures=()):
-    # Distances normalized by palm width adapt to camera distance and resolution.
-    points = [position(point, aspect) for point in landmarks]
-    scale = max(dist(points[5], points[17]), .02)
-    pinches = [("thumb_index", 4, 8), ("thumb_middle", 4, 12), ("thumb_ring", 4, 16),
-               ("thumb_pinky", 4, 20)]
-    distances = [(name, dist(points[a], points[b]) / scale) for name, a, b in pinches]
-    closest, distance = min(distances, key=lambda item: item[1])
-    pinching = dict(distances)["thumb_index"] < threshold
+    builtin = builtin_gesture(landmarks, aspect, threshold)
+    pinching = builtin == "thumb_index"
+    if builtin == AMBIGUOUS:
+        return None, False
+    if builtin in {"index_middle", "victory"} or (builtin and builtin.startswith("thumb_")):
+        return builtin, pinching
     if custom_gestures:
         features = pose_features(landmarks, aspect)
         errors = [(sqrt(sum((a - b) ** 2 for a, b in zip(features, item["features"])) / 25), item["id"])
@@ -58,21 +99,22 @@ def recognize(landmarks, aspect, threshold, custom_gestures=()):
         error, ident = min(errors)
         if error < .16:
             return ident, pinching
-    extended = [dist(points[0], points[tip]) > dist(points[0], points[pip]) * 1.22
-                for tip, pip in ((8, 6), (12, 10), (16, 14), (20, 18))]
-    if not any(extended):
-        return "fist", pinching
-    if distance < threshold:
-        return closest, pinching
-    if all(extended):
-        if dist(points[8], points[12]) / scale < threshold * .8:
-            return "index_middle", pinching
-        return "open_palm", pinching
-    if extended == [True, True, False, False]:
-        if dist(points[8], points[12]) / scale < threshold:
-            return "index_middle", pinching
-        return "victory", pinching
-    return None, pinching
+    return builtin, pinching
+
+
+class MovementTransitionGuard:
+    """Stopping movement is immediate; adjacent key/click gestures wait for settling."""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.last_movement = float("-inf")
+
+    def allow_action(self, movement_pose, now):
+        if movement_pose:
+            self.last_movement = now
+            return False
+        return now - self.last_movement >= .2
 
 
 class GestureGate:
