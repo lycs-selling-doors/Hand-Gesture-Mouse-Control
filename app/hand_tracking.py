@@ -20,7 +20,7 @@ class HandLandmark(IntEnum):
 
 
 class HandTracker:
-    def __init__(self, model_path):
+    def __init__(self, model_path, num_hands=2):
         model_path = Path(model_path).resolve()
         if not model_path.is_file():
             raise FileNotFoundError(
@@ -30,7 +30,7 @@ class HandTracker:
         options = vision.HandLandmarkerOptions(
             base_options=python.BaseOptions(model_asset_path=str(model_path)),
             running_mode=vision.RunningMode.VIDEO,
-            num_hands=2,
+            num_hands=num_hands,
             min_hand_detection_confidence=0.7,
             min_hand_presence_confidence=0.7,
             min_tracking_confidence=0.7,

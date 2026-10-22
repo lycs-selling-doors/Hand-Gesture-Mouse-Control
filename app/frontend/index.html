@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'unsafe-eval'; connect-src 'self'">
+  <title>Gesture Desk</title><style>/*INLINE_STYLE*/</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><div class="brand-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M11 19V8a2 2 0 0 1 4 0v7-10a2 2 0 0 1 4 0v10-7a2 2 0 0 1 4 0v9-4a2 2 0 0 1 4 0v8c0 6-4 9-10 9-4 0-6-2-8-5l-4-6c-2-3 1-5 3-3l3 3Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div><strong>Gesture Desk<span class="version">DESKTOP</span></strong><small>让每一种姿势，都有舒服的操控方式。</small></div></div>
+    <div class="header-actions"><span id="outputStatus" class="status"><i></i>控制已暂停</span><button id="previewButton" class="button outline">启动预览</button><button id="armButton" class="button primary" disabled>启用控制 <span>↗</span></button></div>
+  </header>
+  <div class="app-shell">
+    <div class="section-top"><div><span class="eyebrow">WORKSPACE</span><h1>手势控制台</h1></div><div class="emergency">紧急暂停 <kbd>F8</kbd><span>或将鼠标移至屏幕角落</span></div></div>
+    <nav id="modes" class="mode-bar" aria-label="控制模式">
+      <button data-mode="mouse" class="mode active"><span class="mode-symbol">⌖</span>鼠标模式<small>MOUSE</small></button>
+      <button data-mode="ppt" class="mode"><span class="mode-symbol">▣</span>PPT 模式<small>PRESENT</small></button>
+      <button data-mode="media" class="mode"><span class="mode-symbol">▷</span>媒体模式<small>MEDIA</small></button>
+      <button data-mode="custom" class="mode"><span class="mode-symbol">⌘</span>自定义模式<small>CUSTOM</small></button>
+    </nav>
+    <div id="errorBanner" class="banner error" role="alert" hidden></div>
+    <div id="modelBanner" class="banner" hidden><span>首次使用需要手部识别模型。下载后可离线识别。</span><button id="modelButton" class="button small">下载手部模型</button></div>
+    <main class="workspace">
+      <div class="left-column">
+        <section class="panel preview-panel">
+          <div class="panel-heading"><div><h2>实时预览</h2><span class="muted">食指中指并拢时移动 · 食指指尖定位</span></div><div class="preview-metrics"><span id="fps">— FPS</span><span class="live-dot" id="cameraStatus">摄像头未启动</span></div></div>
+          <div class="preview" id="preview">
+            <img id="cameraFrame" alt="摄像头实时画面" hidden>
+            <div id="previewPlaceholder" class="preview-placeholder"><svg class="hand-outline" viewBox="0 0 240 200" fill="none"><path d="m80 120-30-35c-8-12-23-2-15 10l43 64c12 20 24 26 52 26 39 0 61-23 61-58V74c0-16-20-16-20 0V52c0-17-22-17-22 0V35c0-17-23-17-23 0v21-33c0-17-23-17-23 0v97Z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="m120 160 5-73m0 73 23-75m-20 75 41-54M121 160 81 119" stroke="currentColor" stroke-width="1" stroke-dasharray="3 5"/><g fill="currentColor"><circle cx="122" cy="160" r="4"/><circle cx="103" cy="66" r="3"/><circle cx="125" cy="55" r="3"/><circle cx="149" cy="70" r="3"/><circle cx="172" cy="94" r="3"/><circle cx="80" cy="120" r="3"/></g></svg><strong>从一个自然的手势开始</strong><span>启动预览，将一只手放入镜头范围</span></div>
+            <canvas id="overlay" aria-label="手位与灵敏度活动范围"></canvas>
+            <div class="preview-label"><span class="square-dot"></span>舒适活动范围</div>
+            <div id="tuningHint" class="tuning-hint" hidden></div>
+            <div class="preview-footer"><span id="gestureLabel">等待手势</span><span id="lastAction">尚未输出操作</span></div>
+          </div>
+          <div class="preview-caption"><span><i class="mini-cross"></i>范围由灵敏度自动计算，无需拖动边框</span><button id="centerButton" class="text-button">◎ 当前手位设为中心</button></div>
+        </section>
+
+        <section class="panel sensitivity-panel">
+          <div class="panel-heading"><div><h2>找到你的舒适手感</h2><span class="muted">提高灵敏度，同样的手部移动会让光标走得更远。</span></div><span id="savedStatus" class="saved">自动保存</span></div>
+          <div id="postures" class="posture-tabs" aria-label="姿势预设"><button data-posture="seated" class="active">坐姿</button><button data-posture="standing">站姿</button><button data-posture="reclined">倚靠</button><button data-posture="custom">自定义</button></div>
+          <div class="slider-row"><div class="slider-label"><label for="gain_x">水平灵敏度</label><span>左右移动</span></div><input id="gain_x" type="range" min="0.5" max="5" step="0.05" value="2.2"><output for="gain_x" id="gain_x_value">2.20×</output><button class="tune-button" data-tune="gain_x" title="用捏合拖动调整">手势调节</button></div>
+          <div class="slider-row"><div class="slider-label"><label for="gain_y">垂直灵敏度</label><span>上下移动</span></div><input id="gain_y" type="range" min="0.5" max="5" step="0.05" value="2.8"><output for="gain_y" id="gain_y_value">2.80×</output><button class="tune-button" data-tune="gain_y">手势调节</button></div>
+          <div class="slider-row"><div class="slider-label"><label for="smoothing">响应速度</label><span>平稳 ← → 跟手</span></div><input id="smoothing" type="range" min="0.1" max="0.9" step="0.01" value="0.4"><output for="smoothing" id="smoothing_value">40%</output><button class="tune-button" data-tune="smoothing">手势调节</button></div>
+          <div class="sensitivity-note"><span>姿势变了？先放松手臂，再设置中立手位。每种姿势单独记忆。</span><button id="resetPosture" class="text-button">重置此姿势</button></div>
+        </section>
+      </div>
+
+      <div class="right-column">
+        <section class="panel bindings-panel">
+          <div class="panel-heading"><div><h2>手势与操作</h2><span id="modeDescription" class="muted">移动光标，捏合完成鼠标操作。</span></div><span id="profileBadge" class="badge">MOUSE</span></div>
+          <div class="binding-column-head"><span>手势</span><span>触发操作</span></div>
+          <div id="bindings" class="bindings"></div>
+          <button id="captureButton" class="add-gesture">＋ 录入自己的手势</button>
+          <div id="captureStatus" class="capture-status" hidden></div>
+          <div class="binding-foot"><span class="small-icon">↳</span>保持片刻触发一次，松开后可再次触发。<br><span>快捷键发送给当前前台的 PPT 或播放器。</span></div>
+        </section>
+        <section class="panel device-panel">
+          <div class="panel-heading compact"><h2>设备与运行</h2><span class="badge subtle">LOCAL</span></div>
+          <div class="device-line"><label for="cameraId">摄像头编号</label><input id="cameraId" type="number" min="0" max="10" value="0" aria-label="摄像头编号"></div>
+          <div class="device-line"><label for="cudaToggle">CUDA 图像预处理</label><label class="switch"><input type="checkbox" id="cudaToggle"><span></span></label></div>
+          <p id="cudaReason" class="device-note">正在检测 CUDA 能力…</p>
+          <div class="runtime-line"><span>手部推理 <b>CPU</b></span><span>图像预处理 <b id="preprocessing">CPU</b></span></div>
+          <details><summary>识别参数</summary><div class="device-line"><label for="pinchThreshold">捏合阈值</label><input id="pinchThreshold" type="number" min="0.15" max="0.65" step="0.01" value="0.32"></div><div class="device-line"><label for="holdMs">触发保持时间 / ms</label><input id="holdMs" type="number" min="100" max="1000" step="50" value="200"></div><p class="device-note">捏合阈值按手掌宽度归一化。调大更容易触发。</p></details>
+        </section>
+      </div>
+    </main>
+    <footer class="app-footer"><span>● 本地识别 · 静态手势录入</span><span>编辑、校准或返回控制台时自动暂停输出</span><span id="connectionStatus">正在连接桌面后端…</span></footer>
+  </div>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <dialog id="captureDialog"><form method="dialog"><span class="eyebrow">PERSONAL GESTURE</span><h2>录入一个属于你的手势</h2><p>输入名称后，你有 2 秒准备，再保持姿势 1.5 秒。适合静态手型，不用于录制挥手等动态动作。</p><label for="gestureName">手势名称</label><input id="gestureName" maxlength="30" placeholder="例如：我的确认手势" required><div class="dialog-actions"><button class="button outline" value="cancel" formnovalidate>取消</button><button class="button primary" value="capture" id="confirmCapture">开始录入</button></div></form></dialog>
+  <script>/*INLINE_SCRIPT*/</script>
+</body></html>

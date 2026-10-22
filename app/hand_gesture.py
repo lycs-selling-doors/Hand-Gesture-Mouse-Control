@@ -9,9 +9,11 @@ import numpy as np
 import pyautogui
 
 if __package__:
+    from .gesture_logic import MovementGate, is_move_gesture
     from .hand_tracking import HandLandmark, HandTracker, draw_landmarks
     from .model import DEFAULT_MODEL_PATH
 else:
+    from gesture_logic import MovementGate, is_move_gesture
     from hand_tracking import HandLandmark, HandTracker, draw_landmarks
     from model import DEFAULT_MODEL_PATH
 
@@ -94,6 +96,7 @@ def scroll_down():
 
 def start_hand_gesture_control(model_path=DEFAULT_MODEL_PATH):
     global last_gesture_time
+    movement = MovementGate()
 
     # Validate/load the model before taking ownership of the camera.
     with HandTracker(model_path) as hands:
@@ -142,25 +145,16 @@ def start_hand_gesture_control(model_path=DEFAULT_MODEL_PATH):
                         ring_x, ring_y = int(ring_finger_tip.x * frame_width), int(ring_finger_tip.y * frame_height)
                         pinky_x, pinky_y = int(pinky_tip.x * frame_width), int(pinky_tip.y * frame_height)
 
-                        # 获取手腕的位置（作为手掌的中心）
-                        wrist = landmarks[HandLandmark.WRIST]
-                        hand_center = (int(wrist.x * frame_width), int(wrist.y * frame_height))
-
-                        # 将手掌中心映射到鼠标位置
-                        mouse_control.move_mouse(hand_center[0], hand_center[1], frame_width, frame_height)
+                        # Only move while both fingers are extended and together.
+                        held = is_move_gesture(landmarks, frame_width / frame_height)
+                        if movement.update(held, time.monotonic()):
+                            mouse_control.move_mouse(index_x, index_y, frame_width, frame_height)
 
                         # 判断拇指与食指是否对碰，模拟左键单击
                         thumb_index_distance = np.sqrt((thumb_x - index_x) ** 2 + (thumb_y - index_y) ** 2)
                         if thumb_index_distance < gesture_distance_threshold:
                             if time.time() - last_gesture_time > click_delay:
                                 left_click()
-                                last_gesture_time = time.time()
-
-                        # 判断食指与中指是否对碰，模拟右键单击
-                        index_middle_distance = np.sqrt((index_x - middle_x) ** 2 + (index_y - middle_y) ** 2)
-                        if index_middle_distance < gesture_distance_threshold:
-                            if time.time() - last_gesture_time > click_delay:
-                                right_click()
                                 last_gesture_time = time.time()
 
                         # 判断大拇指与中指是否对碰，模拟滑轮向下滚动
@@ -191,6 +185,9 @@ def start_hand_gesture_control(model_path=DEFAULT_MODEL_PATH):
                             if time.time() - last_gesture_time > click_delay:
                                 double_click()  # 模拟双击
                                 last_gesture_time = time.time()
+
+                if not results.hand_landmarks:
+                    movement.reset()
 
                 # 显示带有手部标记的图像
                 cv2.imshow("Hand Gesture Control", frame)
