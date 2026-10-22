@@ -1,4 +1,5 @@
-opencv-python
-mediapipe
-pyautogui
-tensorflow
+# Python 3.12 is the tested baseline. Use one OpenCV distribution only.
+mediapipe==1.1.1
+opencv-contrib-python==5.0.0.93
+numpy==2.5.4
+PyAutoGUI==0.9.54

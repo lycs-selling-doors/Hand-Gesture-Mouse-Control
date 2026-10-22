@@ -21,11 +21,19 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Requirements file (if you use virtual environments)
-*.txt
+# Dependency files are versioned.
 
 # Logs
 *.log
 
 # Local configuration files
 settings.py
+
+# Local virtual environment and downloaded model
+.venv/
+models/*.task
+models/*.download
+
+# Development test caches
+.test-tmp/
+.mpl-cache/
