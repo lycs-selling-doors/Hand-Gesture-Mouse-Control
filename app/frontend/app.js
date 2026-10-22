@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 let info, config, live = {}, frameId = -1, revision = -1, saving = 0, saveQueue = Promise.resolve();
 let pollTimer, toastTimer, sliderTimer, recording = null, dirtySlider = false;
 const modeDescriptions = {
-  mouse: "移动光标，捏合完成鼠标操作。", ppt: "翻页、开始放映与退出，无需拿起翻页笔。",
+  mouse: "食指中指伸直并拢时移动，以食指指尖定位。", ppt: "翻页、开始放映与退出，无需拿起翻页笔。",
   media: "播放、切歌与音量，手势掌控你的节奏。", custom: "为自己的工作流程，组合喜欢的手势和快捷键。"
 };
 const modeBadges = {mouse: "MOUSE", ppt: "PRESENT", media: "MEDIA", custom: "CUSTOM"};
@@ -68,6 +68,12 @@ function renderBindings() {
     actionChoices.forEach(([value, label]) => { const option = document.createElement("option"); option.value = value; option.textContent = label; select.append(option); });
     const customKey = action.startsWith("hotkey:") || (action.startsWith("key:") && !actionChoices.some(([key]) => key === action));
     select.value = customKey ? "keyboard" : action;
+    const movementReserved = config.mode === "mouse" && gesture.id === "index_middle";
+    if (movementReserved) {
+      select.replaceChildren();
+      const option = document.createElement("option"); option.textContent = "持续移动 · 食指指尖";
+      select.append(option); select.disabled = true; select.dataset.reserved = "true";
+    }
     const record = document.createElement("button"); record.className = "key-recorder";
     record.textContent = customKey ? action.split(":")[1].toUpperCase() : "按键…";
     record.title = "点击后按下目标快捷键；Esc 取消"; record.hidden = !customKey;
@@ -119,7 +125,11 @@ function drawOverlay() {
   ctx.moveTo(center[0] * w - 8, center[1] * h); ctx.lineTo(center[0] * w + 8, center[1] * h);
   ctx.moveTo(center[0] * w, center[1] * h - 8); ctx.lineTo(center[0] * w, center[1] * h + 8); ctx.stroke();
   const finger = live.landmarks?.[8];
-  if (live.tuning && finger) { ctx.fillStyle = "#ffcc78"; ctx.beginPath(); ctx.arc(finger.x * w, finger.y * h, 7, 0, Math.PI * 2); ctx.fill(); }
+  if (finger) {
+    ctx.fillStyle = live.movement_pose ? "#63f5be" : "#ffcc78";
+    ctx.beginPath(); ctx.arc(finger.x * w, finger.y * h, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#122c39"; ctx.lineWidth = 2; ctx.stroke();
+  }
 }
 function renderState(state) {
   live = state;
@@ -135,14 +145,14 @@ function renderState(state) {
   $("cameraStatus").textContent = state.running ? "实时画面" : "摄像头未启动";
   $("cameraStatus").classList.toggle("on", state.running);
   $("fps").textContent = state.running ? state.fps + " FPS" : "— FPS";
-  $("gestureLabel").textContent = state.gesture;
+  $("gestureLabel").textContent = state.movement_pose ? "移动手势 · 食指中指并拢" : state.gesture;
   $("lastAction").textContent = state.last_action;
   $("preprocessing").textContent = state.preprocessing;
   $("cameraId").disabled = state.running;
   $("cudaToggle").disabled = state.running || !info.cuda.available;
   $("centerButton").disabled = !state.running;
   $("captureButton").disabled = !state.running || !!state.tuning || enrolling;
-  document.querySelectorAll("[data-mode], [data-posture], .binding-action select, .key-recorder, .delete-gesture, input[type=range], #resetPosture, #centerButton, #pinchThreshold, #holdMs").forEach(element => element.disabled = enrolling);
+  document.querySelectorAll("[data-mode], [data-posture], .binding-action select, .key-recorder, .delete-gesture, input[type=range], #resetPosture, #centerButton, #pinchThreshold, #holdMs").forEach(element => element.disabled = enrolling || element.dataset.reserved === "true");
   $("centerButton").disabled = !state.running || enrolling;
   $("errorBanner").hidden = !state.error; $("errorBanner").textContent = state.error;
   $("captureStatus").hidden = !state.capture; $("captureStatus").textContent = state.capture;

@@ -11,7 +11,8 @@ import numpy as np
 
 from app.control_config import ConfigStore, default_config, validate_action, validate_config
 from app.desktop_controller import DesktopController, cuda_capability, dispatch
-from app.gesture_logic import GestureGate, PointerMapper, SensitivityTuner, pose_features, recognize
+from app.gesture_logic import (GestureGate, MovementGate, PointerMapper, SensitivityTuner,
+                               is_move_gesture, pose_features, recognize)
 
 
 def hand():
@@ -46,6 +47,16 @@ class ConfigurationTests(unittest.TestCase):
                 validate_action(action)
         self.assertEqual(validate_action("hotkey:ctrl+shift+p"), "hotkey:ctrl+shift+p")
 
+    def test_old_movement_right_click_is_removed_without_resetting_user_settings(self):
+        config = default_config(); config.pop("pointer_anchor")
+        config["bindings"]["mouse"].update(index_middle="click:right", fist="click:left", thumb_index="none")
+        config["postures"]["seated"]["gain_y"] = 3.4
+        migrated = validate_config(config)
+        self.assertEqual(migrated["bindings"]["mouse"]["index_middle"], "none")
+        self.assertEqual(migrated["bindings"]["mouse"]["fist"], "click:left")
+        self.assertEqual(migrated["postures"]["seated"]["gain_y"], 3.4)
+        self.assertEqual(migrated["pointer_anchor"], "index_tip")
+
     def test_custom_pose_validation_and_binding(self):
         config = default_config()
         config["custom_gestures"] = [{"id": "pose_test", "name": "测试手型", "features": pose_features(hand())}]
@@ -76,6 +87,28 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class GestureTests(unittest.TestCase):
+    def test_only_extended_together_fingers_enable_movement(self):
+        landmarks = hand()
+        self.assertFalse(is_move_gesture(landmarks))
+        landmarks[12] = SimpleNamespace(x=.42, y=.2, z=0.)
+        self.assertTrue(is_move_gesture(landmarks))
+        landmarks[8] = SimpleNamespace(x=.5, y=.8, z=0.)
+        landmarks[12] = SimpleNamespace(x=.5, y=.8, z=0.)
+        self.assertFalse(is_move_gesture(landmarks))
+
+    def test_pinches_never_enable_movement(self):
+        landmarks = hand(); landmarks[12] = SimpleNamespace(x=.42, y=.2, z=0.)
+        landmarks[4] = deepcopy(landmarks[8])
+        self.assertFalse(is_move_gesture(landmarks))
+
+    def test_movement_has_short_activation_and_immediate_release(self):
+        gate = MovementGate()
+        self.assertFalse(gate.update(True, 0))
+        self.assertFalse(gate.update(True, .05))
+        self.assertTrue(gate.update(True, .11))
+        self.assertFalse(gate.update(False, .12))
+        self.assertFalse(gate.update(True, .13))
+
     def test_open_palm_and_pinches_are_resolution_independent(self):
         landmarks = hand()
         self.assertEqual(recognize(landmarks, 1, .32)[0], "open_palm")
@@ -242,6 +275,28 @@ class ControllerTests(unittest.TestCase):
                 self.controller._run()
         self.automation.press.assert_called_once_with("right", _pause=False)
         self.automation.moveTo.assert_not_called()
+
+    def test_worker_moves_from_index_tip_only_while_movement_pose_is_held(self):
+        held = hand(); held[12] = SimpleNamespace(x=.42, y=.2, z=0.)
+        self.controller._state["armed"] = True; self.controller._gui_focused = False
+        # Even an overlapping custom pose with a click mapping cannot click during movement.
+        self.controller._config["custom_gestures"] = [{"id": "pose_move", "name": "重叠手型",
+                                                      "features": pose_features(held, 320 / 240)}]
+        self.controller._config["bindings"]["mouse"]["pose_move"] = "click:right"
+        frame = np.zeros((240, 320, 3), np.uint8)
+        clock = iter(i * .12 for i in range(100))
+        with patch("app.desktop_controller.HandTracker") as tracker, patch("app.desktop_controller.cv2.VideoCapture") as camera:
+            tracker.return_value.__enter__.return_value.process.side_effect = [
+                SimpleNamespace(hand_landmarks=[held]), SimpleNamespace(hand_landmarks=[held]),
+                SimpleNamespace(hand_landmarks=[hand()]), SimpleNamespace(hand_landmarks=[])]
+            camera.return_value.isOpened.return_value = True
+            camera.return_value.read.side_effect = [(True, frame)] * 4 + [(False, None)]
+            with patch("app.desktop_controller.time.monotonic", side_effect=lambda: next(clock)):
+                self.controller._run()
+        expected = PointerMapper().map(held[8].x, held[8].y,
+                                      self.controller._config["postures"]["seated"], 1920, 1080)
+        self.automation.moveTo.assert_called_once_with(*expected, _pause=False)
+        self.automation.click.assert_not_called()
 
     def test_shortcuts_release_modifiers_even_when_keydown_fails(self):
         self.automation.keyDown.side_effect = [None, RuntimeError("input failed")]

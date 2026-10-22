@@ -14,6 +14,34 @@ def pose_features(landmarks, aspect=1):
     return [dist(points[a], points[b]) / scale for a, b in pairs]
 
 
+def is_move_gesture(landmarks, aspect=1, threshold=.32):
+    """Both fingers extended and together; pinches must never move the pointer."""
+    points = [position(point, aspect) for point in landmarks]
+    scale = max(dist(points[5], points[17]), .02)
+    extended = all(dist(points[0], points[tip]) > dist(points[0], points[pip]) * 1.22
+                   for tip, pip in ((8, 6), (12, 10)))
+    separated_from_thumb = all(dist(points[4], points[tip]) / scale >= threshold
+                               for tip in (8, 12, 16, 20))
+    return extended and separated_from_thumb and dist(points[8], points[12]) / scale < threshold
+
+
+class MovementGate:
+    """Brief stable activation, but immediate release with no trailing motion."""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.since = None
+
+    def update(self, held, now):
+        if not held:
+            self.reset()
+            return False
+        if self.since is None:
+            self.since = now
+        return now - self.since >= .1
+
+
 def recognize(landmarks, aspect, threshold, custom_gestures=()):
     # Distances normalized by palm width adapt to camera distance and resolution.
     points = [position(point, aspect) for point in landmarks]

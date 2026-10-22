@@ -27,14 +27,14 @@ KEYS = set("abcdefghijklmnopqrstuvwxyz0123456789") | {
 
 def default_config():
     bindings = {mode: {gesture: "none" for gesture in GESTURES} for mode in PROFILES}
-    bindings["mouse"].update(thumb_index="click:left", index_middle="click:right",
+    bindings["mouse"].update(thumb_index="click:left",
                              thumb_middle="scroll:-3", thumb_ring="scroll:3", thumb_pinky="doubleclick")
     bindings["ppt"].update(thumb_index="key:right", thumb_middle="key:left",
                            thumb_ring="key:f5", thumb_pinky="key:esc", victory="key:b")
     bindings["media"].update(thumb_index="key:playpause", thumb_middle="key:nexttrack",
                              thumb_ring="key:volumeup", thumb_pinky="key:volumedown", fist="key:volumemute")
     posture = {"gain_x": 2.2, "gain_y": 2.8, "smoothing": 0.4, "center": [0.5, 0.55]}
-    return {"version": 1, "mode": "mouse", "posture": "seated", "camera": 0,
+    return {"version": 1, "pointer_anchor": "index_tip", "mode": "mouse", "posture": "seated", "camera": 0,
             "cuda": False, "pinch_threshold": 0.32, "hold_ms": 200,
             "postures": {name: deepcopy(posture) for name in POSTURES},
             "bindings": bindings, "custom_gestures": []}
@@ -115,6 +115,8 @@ def validate_config(value):
         if not isinstance(bindings, dict) or any(key not in names for key in bindings):
             raise ValueError("绑定引用了未知手势")
         config["bindings"][mode] = {gesture: validate_action(bindings.get(gesture, "none")) for gesture in names}
+    # Migrate the old right-click binding; this gesture is reserved for movement.
+    config["bindings"]["mouse"]["index_middle"] = "none"
     return config
 
 

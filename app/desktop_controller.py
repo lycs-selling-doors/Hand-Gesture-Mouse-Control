@@ -13,7 +13,8 @@ import numpy as np
 
 from .control_config import ConfigStore, GESTURES, POSTURES, PROFILES, validate_config
 from .download_model import download_model
-from .gesture_logic import GestureGate, PointerMapper, SensitivityTuner, pose_features, recognize
+from .gesture_logic import (GestureGate, MovementGate, PointerMapper, SensitivityTuner,
+                            is_move_gesture, pose_features, recognize)
 from .hand_tracking import HandTracker, draw_landmarks
 from .model import DEFAULT_MODEL_PATH
 
@@ -81,7 +82,8 @@ class DesktopController:
         self._state = {"running": False, "armed": False, "arming": 0, "tuning": "",
                        "frame": "", "frame_id": 0, "fps": 0, "landmarks": [],
                        "gesture": "等待手势", "last_action": "尚未输出操作", "error": self._store.error,
-                       "capture": "", "downloading": False, "preprocessing": "CPU", "inference": "CPU"}
+                       "capture": "", "downloading": False, "preprocessing": "CPU", "inference": "CPU",
+                       "moving": False, "movement_pose": False}
 
     def _auto(self):
         if self._automation is None:
@@ -171,7 +173,7 @@ class DesktopController:
 
     def _disarm(self):
         self._arm_at = 0
-        self._state.update(armed=False, arming=0)
+        self._state.update(armed=False, arming=0, moving=False)
 
     def pause_output(self):
         with self._lock:
@@ -268,6 +270,7 @@ class DesktopController:
     def _run(self):
         cap = None
         gate, mapper, tuner = GestureGate(), PointerMapper(), SensitivityTuner()
+        movement = MovementGate()
         last_tuning, previous_revision = "", -1
         frame_time = time.monotonic()
         preview_time = 0
@@ -294,6 +297,7 @@ class DesktopController:
                         if previous_revision != self._revision:
                             gate.reset()
                             mapper.reset()
+                            movement.reset()
                             tuner.anchor = None
                             previous_revision = self._revision
                         if self._arm_at:
@@ -303,6 +307,7 @@ class DesktopController:
                                 self._arm_at = 0
                                 gate.reset()
                                 gate.latched = True  # Require a release after enabling control.
+                                movement.reset()
                         if platform.system() == "Windows" and ctypes.windll.user32.GetAsyncKeyState(0x77) & 0x8000:
                             self._disarm()
                         armed = self._state["armed"] and not self._gui_focused
@@ -317,12 +322,14 @@ class DesktopController:
                     aspect = frame.shape[1] / frame.shape[0]
                     enrolling = self._enroll(landmarks, aspect, now)
                     gesture = None
+                    moving = movement_pose = False
                     if landmarks:
                         gesture, pinching = recognize(landmarks, aspect, config["pinch_threshold"], config["custom_gestures"])
                         draw_landmarks(frame, landmarks)
-                        wrist = (landmarks[0].x, landmarks[0].y)
+                        pointer = (landmarks[8].x, landmarks[8].y)
+                        movement_pose = config["mode"] == "mouse" and is_move_gesture(landmarks, aspect, config["pinch_threshold"])
                         with self._lock:
-                            self._last_hand, self._last_hand_at = wrist, now
+                            self._last_hand, self._last_hand_at = pointer, now
                         if tuning:
                             if tuning != last_tuning:
                                 tuner.anchor = None
@@ -334,25 +341,34 @@ class DesktopController:
                                 if self._revision == previous_revision:
                                     self._config["postures"][config["posture"]][tuning] = updated
                         elif armed and not enrolling:
-                            action = config["bindings"][config["mode"]].get(gesture, "none")
+                            mouse_mode = config["mode"] == "mouse"
+                            # Movement wins over any overlapping custom pose binding.
+                            action = ("none" if mouse_mode and movement_pose else
+                                      config["bindings"][config["mode"]].get(gesture, "none"))
                             event = gate.update(gesture if action != "none" else None, now, config["hold_ms"] / 1000)
+                            may_move = movement.update(mouse_mode and movement_pose, now)
+                            if not may_move:
+                                mapper.reset()
                             automation = self._auto()
                             # Recheck under the lock: a concurrent Pause/Save must win.
                             with self._lock:
                                 if self._state["armed"] and not self._gui_focused and not self._stop.is_set() and self._revision == previous_revision:
-                                    if config["mode"] == "mouse":
+                                    if may_move:
                                         screen = automation.size()
-                                        x, y = mapper.map(*wrist, config["postures"][config["posture"]], *screen)
+                                        x, y = mapper.map(*pointer, config["postures"][config["posture"]], *screen)
                                         automation.moveTo(x, y, _pause=False)
+                                        moving = True
                                     if event:
                                         dispatch(action, automation)
                                         self._state["last_action"] = action
                         else:
                             gate.reset()
                             mapper.reset()
+                            movement.reset()
                     else:
                         gate.update(None, now)
                         mapper.reset()
+                        movement.reset()
                         tuner.anchor = None
                     last_tuning = tuning
                     label = GESTURES.get(gesture) or next((g["name"] for g in config["custom_gestures"] if g["id"] == gesture), "未匹配手势")
@@ -360,6 +376,7 @@ class DesktopController:
                         self._state.update(fps=round(1 / max(now - frame_time, .001)),
                                            gesture=label if landmarks else "未检测到手部",
                                            landmarks=[{"x": p.x, "y": p.y} for p in landmarks],
+                                           moving=moving, movement_pose=movement_pose,
                                            preprocessing="CUDA" if gpu_mat is not None else "CPU")
                         if now - preview_time >= .08:
                             encoded, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
@@ -378,7 +395,8 @@ class DesktopController:
                 self._disarm()
                 self._capture = None
                 self._last_hand = None
-                self._state.update(running=False, tuning="", landmarks=[], capture="", fps=0)
+                self._state.update(running=False, tuning="", landmarks=[], capture="", fps=0,
+                                   moving=False, movement_pose=False)
 
 
 class Bridge:
