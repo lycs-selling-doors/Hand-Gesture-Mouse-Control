@@ -1,80 +1,63 @@
-# 🚀 **飞鼠工具** (Hand Gesture Mouse Control) 
+# 飞鼠工具（Hand Gesture Mouse Control）
 
-![Python](https://img.shields.io/badge/Language-Python-blue) ![License](https://img.shields.io/badge/License-MIT-green) ![OpenCV](https://img.shields.io/badge/OpenCV-4.5.1-red) ![PyAutoGUI](https://img.shields.io/badge/PyAutoGUI-v0.9-blueviolet)
+通过摄像头识别手部关键点，控制鼠标移动、点击和滚动。基于 Python、MediaPipe Tasks、OpenCV 和 PyAutoGUI。
 
----
+## 安装与运行
 
-## 📝 项目简介
+本次升级以 **Windows x64 + Python 3.12** 为验证环境。请在新虚拟环境中安装，避免与旧版 OpenCV 或 TensorFlow 环境混用。
 
-# 飞鼠工具 (Hand Gesture Mouse Control)
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m app.download_model
+python -m app.hand_gesture
+```
 
-飞鼠工具是一个基于 **Python**、**MediaPipe** 和 **OpenCV** 的手势识别系统。通过摄像头实时捕捉手部动作，利用 **MediaPipe** 提供的手势识别模型，将手势转换为鼠标移动和点击、滚动操作。该系统无需物理接触，解放双手，提供自然、便捷的交互方式，适用于隔空交互、智能控制、虚拟现实等场景。
+也可以使用 `python app/hand_gesture.py` 启动。按 **q** 退出窗口；PyAutoGUI 的默认紧急停止机制保留。
 
----
+模型下载命令从 Google 官方地址获取固定版本的 `hand_landmarker.task`，校验 SHA-256 后保存到 `models/`。模型不随仓库提交；下载成功后可离线运行。程序启动和导入时不会自动下载。已有模型可通过 `python -m app.hand_gesture --model 路径/hand_landmarker.task` 指定。
 
-💡 **核心优势**:
-- **精准识别**：高效的手势识别和追踪，极低的延迟。
-- **极简操作**：通过简单手势即可实现鼠标操作，手势越少，效率越高。
-- **完全可定制**：只需少量代码修改，快速扩展更多手势和功能。
+## 固定依赖
 
-### 调整手势灵敏度：
-- `sensitivity_factor = 3.5`，该值越大，手势识别越灵敏，可能会出现误判。
-- `threshold = 0.5`，该值越小，识别越敏感，越容易误判。
+| 依赖 | 版本 | 用途 |
+| --- | --- | --- |
+| MediaPipe | 1.1.1 | Tasks Hand Landmarker 手部关键点与跟踪 |
+| opencv-contrib-python | 5.0.0.93 | 摄像头、颜色转换、关键点绘制和窗口 |
+| NumPy | 2.5.4 | 图像数组和鼠标坐标计算 |
+| PyAutoGUI | 0.9.54 | 鼠标与键盘操作 |
 
----
+**只安装一种 OpenCV 包。** MediaPipe 已依赖 `opencv-contrib-python`，因此项目统一使用它，不再另装 `opencv-python`。两者都通过 `import cv2` 使用；本项目需要窗口，不能换为 headless 包。
 
-## 🖱️ 手势操作
-通过以下手势，你可以控制虚拟鼠标的各种操作：
+原依赖文件没有锁定版本，README 中的 0.8.3 / 4.5.1 只是过时说明，无法据此确定原作者实际运行的版本。此次锁定的是直接依赖，不是包含所有间接依赖的完整锁文件。
 
-- **鼠标左键单击**：拇指与食指捏合。
-- **鼠标滚轮向下**：拇指与中指捏合。
-- **鼠标滚轮向上**：拇指与无名指捏合。
-- **鼠标左键双击**：拇指与小指捏合。
+## 手势
 
-手掌的中心点（手腕位置）会实时映射为鼠标位置，虚拟鼠标会跟随手部的动作移动。
+- 移动手腕：移动鼠标。
+- 拇指与食指捏合：左键单击。
+- 食指与中指靠拢：右键单击。
+- 拇指与中指捏合：向下滚动。
+- 拇指与无名指捏合：向上滚动。
+- 拇指与小指捏合：左键双击。
 
----
+此次保持原有手势、距离阈值、滚动速度和鼠标平滑算法。参数位于 `app/hand_gesture.py`：`gesture_distance_threshold`、`click_delay`、`smoothing_factor`；摄像头默认编号为 0。
 
-## 🔧 核心技术栈
+## 依赖更新带来的变化
 
-我们使用了以下视觉技术和工具：
+代码已从停止维护的 `mp.solutions.hands` 迁移到 **Tasks Hand Landmarker**，使用 VIDEO 模式、严格递增的时间戳，并分别配置检测、手部存在及跟踪置信度。连续帧使用跟踪，以减少重复运行手掌检测。旧 Hands 本身也有跟踪，因此这不是相对旧版的性能倍增承诺。
 
-- **Python 3.x**：强大且易于扩展的编程语言。
-- **OpenCV**：经典的计算机视觉库，负责图像捕获和处理。
-- **MediaPipe**：由 Google 推出的高效手部追踪框架，提供精准的关键点检测。
-- **PyAutoGUI**：流行的自动化控制库，模拟鼠标点击、滚动等操作。
-- **Numpy**：基础的数值计算库，处理数据转换和数学运算。
+新版 Tasks 为后续异步 LIVE_STREAM、按实际左右手选择控制手和基于世界坐标设计手势提供接口。本次仍同步处理视频帧，未新增这些交互功能。OpenCV 5 带来持续更新的 CPU 优化、NumPy 2 兼容和视频输入维护；摄像头实际帧率、延迟和误识别率需要实机对比，不能只凭版本号推断。
 
-📚 **依赖**：
+同时移除了未参与实际推理的 TensorFlow、PyTorch、Numba 导入及被覆盖的重复 MouseControl 类，避免安装额外深度学习框架才能启动。模型使用 CPU；没有启用 CUDA。
 
-- `opencv-python` : 4.5.1
-- `mediapipe` : 0.8.3
-- `pyautogui` : 0.9.50
-- `numpy` : 1.21.0
+详细说明和官方来源见 [依赖升级说明](docs/dependency-upgrade.md)。
 
----
+## 验证
 
-## 🛠️ 使用说明
-### 可以拓展的功能如下：
+```powershell
+python -m unittest discover -s tests -v
+python -m pip check
+```
 
-1.截屏功能：通过特定手势触发 pyautogui.screenshot() 进行屏幕截图。
-
-2.音量控制：通过手势触发 pyautogui.hotkey() 来增加或减少音量。
-
-3.窗口切换：通过手势触发 pyautogui.hotkey('alt', 'tab') 实现窗口切换。
-
-4.手势操作灵敏度：通过调整 gesture_distance_threshold 和 sensitivity_factor 来控制手势识别灵敏度和鼠标移动速度。
-
-5.增加新的手势：在 hand_gesture.py 中添加新的手势识别条件（例如拇指与中指捏合触发右键操作）。
-
-6.自定义手势：修改 move_mouse() 方法中的坐标映射来调整鼠标的移动范围。
-
-7.摄像头选择：修改 cv2.VideoCapture() 参数来选择不同的摄像头（默认为 0）。
-
-### 运行，将项目下载部署在本地————按照requirements.txt文件搭建python运行环境，运行hand_gesture.py.py文件。
-
----
-
-## 联系我们
-如有问题或建议，欢迎通过 GitHub 提交 Issues 或者直接联系我们。
-我们非常欢迎开发者和用户提供反馈，帮助我们做得更好！
+测试不打开摄像头或操作真实鼠标。下载模型后，会执行真实模型的连续空白帧推理；未下载时该集成测试会明确跳过。摄像头采集、真实手势和端到端延迟仍需手动验证。
