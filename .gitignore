@@ -37,3 +37,7 @@ models/*.download
 # Development test caches
 .test-tmp/
 .mpl-cache/
+
+# Personal desktop configuration
+user-settings.json
+user-settings.invalid.json
